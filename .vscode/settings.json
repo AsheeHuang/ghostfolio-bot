@@ -1,0 +1,8 @@
+{
+    "terminal.integrated.fontFamily": "FiraMono Nerd Font, Noto Sans TC",
+    "editor.fontFamily": "FiraMono Nerd Font, Noto Sans TC",
+    "flake8.args": [
+        "--max-line-length=200",
+        "--ignore=E302"
+    ]
+}
