@@ -46,7 +46,7 @@ IMPORT_URL = f"{POST_URL}/import"
 AUTH_URL = f"{POST_URL}/auth/anonymous"
 
 def parse_cathy_csv(args):
-    def get_type(value):
+    def get_action(value):
         if value == "現買":
             return "BUY"
         elif value == "現賣":
@@ -69,14 +69,64 @@ def parse_cathy_csv(args):
                     "dataSource": "YAHOO",
                     "date": datetime.strptime(row["日期"], "%Y/%m/%d").isoformat(),
                     "fee": row["手續費"] + row["交易稅"],
-                    "quantity": int(row["成交股數"].replace(",", "")),
+                    "quantity": int(str(row["成交股數"]).replace(",", "")),
                     "symbol": STOCK_MAP[row["股名"]],
-                    "type": get_type(row["買賣別"]),
+                    "type": get_action(row["買賣別"]),
                     "unitPrice": row["成交價"],
                     "comment": "Imported from importer script"
                 }
             ]
         }
+        res.append(data)
+    return res
+
+def parse_ft_csv(args):
+    def get_action(value):
+        action_map = {
+            "BUY": "BUY",
+            "SELL": "SELL",
+            "Dividend": "DIVIDEND",
+            "Interest": "INTEREST",
+            "Other": "SKIP"
+        }
+        if value not in action_map:
+            raise ValueError(f"Unknown value {value}")
+        return action_map[value]
+
+    df = pd.read_csv(args.file)
+    res = []
+    for _, row in df.iterrows():
+        action = get_action(row["Action"])
+        data = {
+            "activities": [
+                {
+                    "accountId": US_ACCOUNT_ID,
+                    "currency": "USD",
+                    "dataSource": "YAHOO",
+                    "date": datetime.strptime(row["TradeDate"], "%Y-%m-%d").isoformat(),
+                    "symbol": row["Symbol"].split(" ")[0],
+                    "fee": row["Fee"],
+                    "type": action,
+                    "comment": "Imported from importer script"
+                }
+            ]
+        }
+        extra_data = {}
+        if action == "DIVIDEND":
+            extra_data["quantity"] = 1
+            extra_data["unitPrice"] = row["Amount"]
+        elif action == "INTEREST":
+            extra_data["symbol"] = "Interest"
+            extra_data["dataSource"] = "MANUAL"
+            extra_data["quantity"] = 1
+            extra_data["unitPrice"] = row["Amount"]
+        elif action == "BUY" or action == "SELL":
+            extra_data["quantity"] = abs(row["Quantity"])
+            extra_data["unitPrice"] = row["Price"]
+        elif action == "SKIP":
+            continue
+
+        data["activities"][0].update(extra_data)
         res.append(data)
     return res
 
@@ -88,7 +138,7 @@ def send_curl_api(args, activities):
 
     resp = requests.post(f"{AUTH_URL}", data={"accessToken": SECURITY_TOKEN}, timeout=5)
     if resp.status_code != 201:
-        print(f"Failed to authenticate {resp.status_code}")
+        print(f"Failed to authenticate {resp.json()}")
         return
 
     bearer_token = resp.json()["authToken"]
@@ -130,7 +180,6 @@ if __name__ == "__main__":
     if args.format == "cathy":
         activities = parse_cathy_csv(args)
     elif args.format == "ft":
-        # TODO: implement ft format
-        sys.exit(1)
+        activities = parse_ft_csv(args)
 
     send_curl_api(args, activities)
