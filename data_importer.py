@@ -61,6 +61,9 @@ class DataImporter():
             else:
                 return TW2_ACCOUNT_ID
 
+        def to_number(value):
+            return int(str(value).replace(",", ""))
+
         df = pd.read_csv(file, skiprows=1)
         res = []
         for _, row in df.iterrows():
@@ -73,8 +76,8 @@ class DataImporter():
                         "currency": "TWD",
                         "dataSource": "YAHOO",
                         "date": datetime.strptime(row["日期"], "%Y/%m/%d").isoformat(),
-                        "fee": row["手續費"] + int(str(row["交易稅"].replace(",", ""))),
-                        "quantity": int(str(row["成交股數"]).replace(",", "")),
+                        "fee": to_number(row["手續費"]) + to_number(row["交易稅"]),
+                        "quantity": to_number(row["成交股數"]),
                         "symbol": code,
                         "type": get_action(row["買賣別"]),
                         "unitPrice": row["成交價"],

@@ -164,7 +164,6 @@ async def select_holding(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for holding in resp["holdings"]:
             if holding.get("symbol", "") not in holding_list:
                 holding_list.append(holding["symbol"])
-        print(holding_list)
 
     keyboard = []
     for index in range(0, len(holding_list), 3):
@@ -217,9 +216,9 @@ async def position_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt += f"\t\t Price: {resp['marketPrice']} {profile['currency']}\n"
     if not demo_mode:
         txt += f"\t\t Quantity: {resp['quantity']}\n"
-        txt += f"\t\t Cost: {round(resp['investment'], 2)} {profile['currency']}\n" 
-        txt += f"\t\t Current Value: {round(resp['value'], 2)} {profile['currency']}\n"
-        txt += f"\t\t Profit: {round(resp['netPerformance'], 2)} {profile['currency']}\n"
+        txt += f"\t\t Cost: {round(resp['investment'], 2)} TWD\n" 
+        txt += f"\t\t Current Value: {round(resp['value'], 2)} TWD\n"
+        txt += f"\t\t Profit: {round(resp['netPerformance'], 2)} TWD\n"
     profit_percentage = round(resp['netPerformance'] / resp['investment'] * 100, 2)
     txt += f"\t\t Profit Percentage: {profit_percentage} %\n"
 
@@ -253,16 +252,18 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     file = await update.message.document.get_file()
     csv = await file.download_to_drive("import.csv")
-    with open(csv, "r") as f:
-        activities = DataImporter(broker, f).activities()
-        print(activities)
-        context.bot_data["activities"] = activities
+    try:
+        with open(csv, "r") as f:
+            activities = DataImporter(broker, f).activities()
+            context.bot_data["activities"] = activities
+    except Exception as e:
+        await update.message.reply_text("Error: ", str(e))
+        return ConversationHandler.END
 
     await update.message.reply_text("Successfully uploaded the file")
     return await start_import(update, context)
 
 async def start_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("start_import")
     activities = context.bot_data["activities"]
     keyboard = [
         [InlineKeyboardButton("Import", callback_data="import"),
