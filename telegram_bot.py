@@ -4,9 +4,9 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Messa
 
 from ghostfolio import Ghostfolio
 from data_importer import DataImporter
+from decouple import config
 import json
 import matplotlib.pyplot as plt
-import os
 
 holding_list = []
 STAGE1, STAGE2, STAGE3, STAGE4 = range(4)
@@ -366,9 +366,9 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Unknown Command")
 
 if __name__ == '__main__':
-    bot_token = os.getenv("BOT_TOKEN")
-    host = os.getenv("HOST")
-    ghostfolio_token = os.getenv("GHOSTFOLIO_TOKEN")
+    bot_token = config("BOT_TOKEN", "")
+    ghostfolio_token = config("GHOSTFOLIO_TOKEN", "")
+    host = config("HOST", "http://localhost:3333")
 
     application = ApplicationBuilder().token(bot_token).build()
 
