@@ -1,4 +1,5 @@
 import logging
+from decouple import config
 from datetime import datetime, timedelta
 
 import requests
@@ -75,8 +76,8 @@ class Ghostfolio:
             "portfolio/performance", params={"range": date_range}, api_version="v2"
         )
 
-    def holdings(self, date_range: str = "max") -> dict:
-        return self._get("portfolio/holdings", params={"range": date_range})
+    def holdings(self, date_range: str = "max", account_id: str = None) -> dict:
+        return self._get("portfolio/holdings", params={"range": date_range, 'accounts': account_id})
 
     def position(self, data_source: str, symbol: str):
         """Get position for a symbol from a data source."""
@@ -119,3 +120,10 @@ class Ghostfolio:
     def __repr__(self):
         return f"Ghostfolio(host={self.host})"
 
+
+if __name__ == '__main__':
+    ghostfolio_token = config("GHOSTFOLIO_TOKEN", "")
+    host = config("HOST", "localhost:3333")
+
+    ghost = Ghostfolio(token=ghostfolio_token, host=host)
+    print(json.dumps(ghost.admin(), indent=2))
