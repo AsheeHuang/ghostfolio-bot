@@ -2,3 +2,6 @@
 .vscode/
 __pycache__
 .env
+*.png
+stock_map.json
+*.ipynb

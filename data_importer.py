@@ -2,6 +2,8 @@ import pandas as pd
 from datetime import datetime
 from bs4 import BeautifulSoup
 import requests
+import json
+import os
 
 TW_ACCOUNT_ID = "940ff92e-7e3c-42a4-bbad-9a6fa9eab519"
 TW2_ACCOUNT_ID = "b0a06267-2091-4ada-a38d-3243cf9ddc9b"
@@ -14,10 +16,21 @@ class DataImporter():
             raise Exception("Invalid broker")
         self._broker = broker
         self._stock_map = {}
+        self._stock_map_file = "stock_map.json"
+        self._load_stock_map()
         if broker == "cathay":
             self._activities = self._parse_cathay_csv(file)
         elif broker == "ft":
             self._activities = self._parse_ft_csv(file)
+
+    def _save_stock_map(self):
+        with open(self._stock_map_file, 'w') as f:
+            json.dump(self._stock_map, f)
+
+    def _load_stock_map(self):
+        if os.path.exists(self._stock_map_file):
+            with open(self._stock_map_file, 'r') as f:
+                self._stock_map = json.load(f)
 
     def _update_stock_map(self, url):
         response = requests.get(url)
@@ -36,6 +49,7 @@ class DataImporter():
                         self._stock_map[name] = code + ".TW"
                     elif stock_type == "上櫃":
                         self._stock_map[name] = code + ".TWO"
+        self._save_stock_map()
 
     def _parse_cathay_csv(self, file):
         def get_action(value):
