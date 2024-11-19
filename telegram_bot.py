@@ -7,6 +7,7 @@ from data_importer import DataImporter
 from decouple import config
 import json
 import matplotlib.pyplot as plt
+import pandas as pd
 
 holding_list = []
 STAGE1, STAGE2, STAGE3, STAGE4 = range(4)
@@ -16,77 +17,107 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def get_detail(ghost):
+    def format_number(x):
+        if isinstance(x, str):
+            return x
+        if isinstance(x, float):
+            if x.is_integer():
+                return "{:.0f}".format(x)
+            return "{:.2f}".format(x)
+        if isinstance(x, int):
+            return "{:d}".format(x)
+        return x
+
+    usd_twd = ghost.position(data_source="YAHOO", symbol="USDTWD").get("marketPrice")
+
+    def TWD_to_USD(x):
+        return x / usd_twd
+
+    df = pd.DataFrame(columns=["Account", "Stock", "Price", "Quantity", "Unit Cost", "Cost", "Change", "Change(%)", "Allocation", "Total"])
+    accounts = ghost.accounts()
+    total_value = accounts.get("totalValueInBaseCurrency", 0)
+    accounts.get("accounts", {}).sort(key=lambda x: x.get("valueInBaseCurrency", 0), reverse=True)
+    accounts = accounts.get("accounts", [])
+
+    for account in accounts:
+        holdings = ghost.holdings(account_id=account.get("id", "")).get("holdings", {})
+        holdings.sort(key=lambda x: x.get("allocationInPercentage", 0), reverse=True)
+        for h in holdings:
+            currency = h.get("currency", "")
+            if h.get("symbol", "") == "TWD" or h.get("symbol", "") == "USD":
+                continue
+            Cost = h.get("investment", 0) if currency == "TWD" else TWD_to_USD(h.get("investment", 0))
+            Quantity = h.get("quantity", 0)
+            UnitCost = Cost / Quantity if Quantity != 0 else 0
+            Change = h.get("netPerformance", 0) if currency == "TWD" else TWD_to_USD(h.get("netPerformance", 0))
+            allocation_of_account = h.get('allocationInPercentage', 0) * 100
+            allocation = h.get('valueInBaseCurrency', 0) / total_value * 100
+            df.loc[len(df)] = {
+                "Account": "",
+                "Stock": "{}".format(h.get("symbol", "No Name Found")),
+                "Price": format_number(h.get("marketPrice", 0)),
+                "Quantity": format_number(Quantity),
+                "Unit Cost": format_number(UnitCost),
+                "Cost": format_number(Cost),
+                "Change": format_number(Change),
+                "Change(%)": format_number(Change / Cost * 100) + " %",
+                "Allocation": "{} % ({} %)".format(format_number(allocation_of_account), format_number(allocation)),
+                "Total": "{} {}".format(format_number(h.get('quantity', 0) * h.get('marketPrice')), h.get('currency', ''))
+            }
+        total_cost = df.loc[len(df) - len(holdings) + 1: len(df)]["Cost"].map(float).sum()
+        total_change = df.loc[len(df) - len(holdings) + 1: len(df)]["Change"].map(float).sum()
+        df.loc[len(df)] = {
+            "Account": account.get("name", "No Name Found"),
+            "Allocation": format_number(account.get('valueInBaseCurrency', 0) / total_value * 100) + " %",
+            "Cost": format_number(total_cost),
+            "Change": format_number(total_change),
+            "Change(%)": format_number(total_change / total_cost * 100) + " %",
+            "Total": format_number(account.get('value', 0)) + " " + account.get('currency', '')
+        }
+    df.loc[len(df)] = {
+        "Account": "Total",
+        "Total": format_number(total_value) + " " + "TWD"
+    }
+
+    df = df.fillna("")
+    return df
+
+async def detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ghost = context.bot_data["ghostfolio"]
-    raw_data = context.bot_data["raw_data"]
-    demo_mode = context.bot_data["demo_mode"]
+    df = get_detail(ghost)
 
-    resp = ghost.accounts()
+    # transfer the dataframe to an image
+    fig, ax = plt.subplots(figsize=(16, 8))
+    ax.axis("off")
+    ax.axis("tight")
+    table = ax.table(cellText=df.values, colLabels=df.columns, cellLoc="left", loc="upper center")
+    for (row, col), cell in table.get_celld().items():
+        if col == df.columns.get_loc("Change") and row != 0:
+            cell.set_text_props(color='darkred' if cell.get_text().get_text() != "" and float(cell.get_text().get_text()) < 0 else 'darkgreen')
+            cell.set_text_props(ha='right')
+        if col == df.columns.get_loc("Change(%)") and row != 0:
+            cell.set_text_props(color='darkred' if cell.get_text().get_text() != "" and float(cell.get_text().get_text().replace("%", "")) < 0 else 'darkgreen')
+        if col == df.columns.get_loc("Total") and row != 0:
+            cell.set_text_props(ha='right')
+        if col == df.columns.get_loc("Cost") and row != 0:
+            cell.set_text_props(ha='right')
+        if 0 < row <= len(df) and df.loc[row - 1]["Account"] != "":
+            cell.set_text_props(weight='bold')
+        if row % 2 == 0:
+            cell.set_facecolor("#eaeaea")
 
-    if raw_data:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=json.dumps(resp, indent=2))
-        return
+    today = pd.Timestamp.now().strftime("%Y-%m-%d")
+    plt.title(f"Portfolio Detail on {today}")
+    plt.tight_layout()
+    plt.savefig("detail.png", bbox_inches="tight", dpi=300)
 
-    if "accounts" not in resp:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="Error")
-        return
+    await context.bot.send_photo(chat_id=update.effective_chat.id, photo=open("detail.png", "rb"))
+    plt.close()
+    # delete the image after sending
 
-    total_value = round(resp["totalValueInBaseCurrency"], 2)
-    txt = ""
-    for info in resp["accounts"]:
-        value_in_base_currency = round(info["valueInBaseCurrency"], 2)
-        propotion = round(value_in_base_currency / total_value * 100, 2)
-        value = round(info["value"], 2)
-        currency = info['currency']
+    return ConversationHandler.END
 
-        if demo_mode:
-            txt += f"{info['name']}: \t\t ***** {currency}\t {propotion} %\n"
-        else:
-            txt += f"{info['name']}: \t\t {value} {currency}\t {propotion} %\n"
-
-    txt += "\n"
-    if demo_mode:
-        txt += "Total: ***** TWD"
-    else:
-        txt += f"Total: {total_value} TWD"
-
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=txt)
-
-async def holdings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    ghost = context.bot_data["ghostfolio"]
-    raw_data = context.bot_data["raw_data"]
-    demo_mode = context.bot_data["demo_mode"]
-    resp = ghost.holdings()
-    if raw_data:
-        # send resp by chunks
-        for holding in resp["holdings"]:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=json.dumps(holding, indent=2))
-        return
-
-    if "holdings" not in resp:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="Error")
-        return
-
-    txt = ""
-    for holding in resp["holdings"]:
-        if demo_mode:
-            value = "*****"
-            quantity = "*****"
-        else:
-            value = round(holding["valueInBaseCurrency"])
-            quantity = holding["quantity"]
-
-        txt += f"{holding['name']} ({holding['symbol']}): \n"
-        txt += f"\t\t Quantity: {quantity}\n"
-        txt += f"\t\t Price: {holding['marketPrice']} {holding['currency']}\n"
-        txt += f"\t\t Value: {value} TWD \n"
-        txt += f"\t\t Propotion: {round(holding['allocationInPercentage'] * 100, 2)}% \n"
-
-    if len(txt) > 4096:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="The message is too long")
-        return
-
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=txt)
 
 async def select_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -147,82 +178,8 @@ async def performance_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     plt.title(f"Performance of {data_range}")
     plt.tight_layout()
     plt.savefig("performance.png")
-
     await context.bot.send_photo(chat_id=update.effective_chat.id, photo=open("performance.png", "rb"))
-
     plt.close()
-    return ConversationHandler.END
-
-async def select_holding(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not holding_list:
-        ghost = context.bot_data["ghostfolio"]
-        resp = ghost.holdings()
-        if "holdings" not in resp:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="Error")
-            return
-
-        for holding in resp["holdings"]:
-            if holding.get("symbol", "") not in holding_list:
-                holding_list.append(holding["symbol"])
-
-    keyboard = []
-    for index in range(0, len(holding_list), 3):
-        line = []
-        line.append(InlineKeyboardButton(holding_list[index], callback_data=holding_list[index]))
-        if index + 1 < len(holding_list):
-            line.append(InlineKeyboardButton(holding_list[index + 1], callback_data=holding_list[index + 1]))
-        if index + 2 < len(holding_list):
-            line.append(InlineKeyboardButton(holding_list[index + 2], callback_data=holding_list[index + 2]))
-        keyboard.append(line)
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text('Please choose holding:', reply_markup=reply_markup)
-    return STAGE1
-
-async def position_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    symbol = query.data
-
-    ghost = context.bot_data["ghostfolio"]
-    raw_data = context.bot_data["raw_data"]
-    demo_mode = context.bot_data["demo_mode"]
-
-    data_sources = ["YAHOO", "COINGECKO"]
-    try:
-        found = False
-        for source in data_sources:
-            resp = ghost.position(source, symbol)
-            if "SymbolProfile" in resp:
-                found = True
-                break
-        if not found:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="Symbol not found")
-            return
-    except Exception as e:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=str(e))
-        return
-
-    if raw_data:
-        resp.pop("orders", None)
-        resp.pop("historicalData", None)
-
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=json.dumps(resp, indent=2))
-        return
-
-    txt = ""
-    profile = resp["SymbolProfile"]
-    txt += f"{profile['name']} ({profile['symbol']})\n"
-    txt += f"\t\t Price: {resp['marketPrice']} {profile['currency']}\n"
-    if not demo_mode:
-        txt += f"\t\t Quantity: {resp['quantity']}\n"
-        txt += f"\t\t Cost: {round(resp['investment'], 2)} TWD\n" 
-        txt += f"\t\t Current Value: {round(resp['value'], 2)} TWD\n"
-        txt += f"\t\t Profit: {round(resp['netPerformance'], 2)} TWD\n"
-    profit_percentage = round(resp['netPerformance'] / resp['investment'] * 100, 2)
-    txt += f"\t\t Profit Percentage: {profit_percentage} %\n"
-
-    await query.edit_message_text(text=txt)
     return ConversationHandler.END
 
 async def select_broker(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -386,14 +343,6 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('performance', select_range)],
     )
 
-    position_handler = ConversationHandler(
-        entry_points=[CommandHandler('position', select_holding)],
-        states={
-            STAGE1: [CallbackQueryHandler(position_callback)],
-        },
-        fallbacks=[CommandHandler('position', select_holding)],
-    )
-
     import_handler = ConversationHandler(
         entry_points=[CommandHandler('import', select_broker)],
         states={
@@ -413,9 +362,7 @@ if __name__ == '__main__':
     )
 
     # Commands
-    application.add_handler(CommandHandler('accounts', accounts))
-    application.add_handler(CommandHandler('holdings', holdings))
-    application.add_handler(position_handler)
+    application.add_handler(CommandHandler('detail', detail))
     application.add_handler(import_handler)
     application.add_handler(performance_handler)
     application.add_handler(order_handler)
